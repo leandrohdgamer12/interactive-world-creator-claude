@@ -54,6 +54,9 @@ const MISSIONS = [
   { t: "Abra o cofre do Tuca com a senha da sobra", hint: "500 − 56 − 180 − 81 − 25." },
 ];
 const TARGET: (string | null)[] = ["casa", "casa", null, "bairro", "board", "livraria", "eletro", "procon", "casa", "eletro", "bairro", "casa", "casa"];
+const STAMINA_DRAIN_RATE = 100 / 15;
+const STAMINA_RECOVERY_RATE = 5;
+const SPRINT_RESTART_THRESHOLD = 25;
 
 /* ================= DIÁLOGO ================= */
 type Who = "julia" | "mae" | "vend" | "procon" | "tuca" | "sys";
@@ -90,12 +93,14 @@ export function World() {
 
   const P = useRef({ x: 7.5, y: 9.5, dir: "up" as Dir, frame: 0, acc: 0, moving: false });
   const keys = useRef(new Set<string>());
-  const promos = useRef([
-    { x: 2, y: 6.5, vx: 2.2, min: 0.6, max: 10.4, axis: "x" as const }, { x: 18, y: 9.5, vx: -2.4, min: 14.6, max: 46.4, axis: "x" as const },
-    { x: 11.5, y: 2, vx: 2, min: 0.6, max: 42.4, axis: "y" as const }, { x: 5, y: 18.5, vx: 2, min: 0.6, max: 10.4, axis: "x" as const },
-    { x: 30, y: 15.5, vx: 2.2, min: 26.6, max: 58.4, axis: "x" as const }, { x: 35.5, y: 12, vx: -2, min: 8.6, max: 40.4, axis: "y" as const },
-    { x: 20, y: 24.5, vx: 2.3, min: 14.6, max: 46.4, axis: "x" as const }, { x: 5, y: 33.5, vx: -2, min: 0.6, max: 10.4, axis: "x" as const },
-    { x: 47.5, y: 30, vx: 2, min: 2.6, max: 42.4, axis: "y" as const }, { x: 30, y: 42.5, vx: 2.4, min: 14.6, max: 58.4, axis: "x" as const },
+  const stamina = useRef(100);
+  const sprinting = useRef(false);
+  const promos = useRef<Array<{ x: number; y: number; vx: number; min: number; max: number; axis: "x" | "y" }>>([
+    { x: 2, y: 6.5, vx: 2.2, min: 0.6, max: 10.4, axis: "x" }, { x: 18, y: 9.5, vx: -2.4, min: 14.6, max: 46.4, axis: "x" },
+    { x: 11.5, y: 2, vx: 2, min: 0.6, max: 42.4, axis: "y" }, { x: 5, y: 18.5, vx: 2, min: 0.6, max: 10.4, axis: "x" },
+    { x: 30, y: 15.5, vx: 2.2, min: 26.6, max: 58.4, axis: "x" }, { x: 35.5, y: 12, vx: -2, min: 8.6, max: 40.4, axis: "y" },
+    { x: 20, y: 24.5, vx: 2.3, min: 14.6, max: 46.4, axis: "x" }, { x: 5, y: 33.5, vx: -2, min: 0.6, max: 10.4, axis: "x" },
+    { x: 47.5, y: 30, vx: 2, min: 2.6, max: 42.4, axis: "y" }, { x: 30, y: 42.5, vx: 2.4, min: 14.6, max: 58.4, axis: "x" },
   ]);
   const promoCd = useRef(0);
   const cam = useRef({ x: 0, y: 0, scene: "casa" as SceneId });
@@ -158,6 +163,7 @@ export function World() {
   const [cine, setCine] = useState(false);
   const walk = (pts: [number, number][], face: Dir | undefined, done: () => void) => { auto.current = { pts, face, done }; };
   const start = () => {
+    keys.current.clear(); sprinting.current = false; stamina.current = 100;
     warmArt([...ROOM_IDS.map((id) => [`room:${id}`, () => makeRoom(id)] as [string, () => unknown]), ["rua", makeStreet]]);
     setScreen("play"); setScene("casa"); setCine(true); setFade(true);
     P.current = { x: 7.5, y: 10.3, dir: "up", frame: 0, acc: 0, moving: false };
@@ -289,38 +295,54 @@ export function World() {
     if (ch === "C" || ch === "k") return talk([{ who: "vend", text: scene === "mega" ? "Aproveita! Tudo acaba HOJE! (acaba todo dia...)" : `Bem-vinda à ${SHOP_NAME[scene]}! Os produtos estão nas prateleiras do fundo.` }]);
   };
 
+  const toggleSprint = () => {
+    if (sprinting.current) {
+      sprinting.current = false;
+      return;
+    }
+    if (stamina.current < SPRINT_RESTART_THRESHOLD) return;
+    if (S.current.lines.length || S.current.panel || S.current.fade || S.current.bag) return;
+    sprinting.current = true;
+  };
+  const inputActions = useRef({ advance, interact, toggleSprint });
+  inputActions.current = { advance, interact, toggleSprint };
+
   /* --- teclado --- */
   useEffect(() => {
     if (screen !== "play") return;
     const down = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();if (k === "shift") e.preventDefault();
+      const k = e.key.toLowerCase();
+      if (k === "shift") {
+        e.preventDefault();
+        if (!e.repeat) inputActions.current.toggleSprint();
+        return;
+      }
       if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k) && !(e.target instanceof HTMLInputElement)) e.preventDefault();
       if (k === " " || k === "enter" || k === "e") {
         if (e.target instanceof HTMLInputElement) return;
-        if (S.current.lines.length) return advance();
-        if (!S.current.panel && !S.current.fade && !S.current.bag) interact();
+        if (S.current.lines.length) return inputActions.current.advance();
+        if (!S.current.panel && !S.current.fade && !S.current.bag) inputActions.current.interact();
         return;
       }
       keys.current.add(k);
     };
-    const up = (e: KeyboardEvent) => {
-  keys.current.delete(e.key.toLowerCase());
-};
-    const clearKeys = () => keys.current.clear();
+    const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
+    const clearKeys = () => { keys.current.clear(); sprinting.current = false; };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up);
     window.addEventListener("blur", clearKeys);
     return () => {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
-      window.removeEventListener("blur", clearKeys); keys.current.clear();
+      window.removeEventListener("blur", clearKeys); clearKeys();
     };
-  });
+  }, [screen]);
 
   /* --- loop do jogo --- */
   useEffect(() => {
     if (screen !== "play") return;
     let raf = 0, last = performance.now();
     const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const elapsed = Math.max(0, (now - last) / 1000);
+      const dt = Math.min(0.05, elapsed); last = now;
       const st = S.current; const p = P.current; const k = keys.current;
       const free = !st.lines.length && !st.panel && !st.fade && !st.bag;
       let dx = 0, dy = 0;
@@ -337,23 +359,34 @@ export function World() {
         if (k.has("arrowdown") || k.has("s")) dy += 1;
       }
       if (!auto.current) p.moving = !!(dx || dy);
+      if (!free || auto.current) sprinting.current = false;
+      const sprintingNow = sprinting.current && free && !auto.current && p.moving && stamina.current > 0;
+      const startX = p.x, startY = p.y;
       if (auto.current) { /* cutscene */ } else if (p.moving) {
         p.dir = dx ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
         if (dx && dy) { dx *= 0.707; dy *= 0.707; }
-        const sp = (k.has("shift") ? 13 : 8) * dt;
+        const sp = (sprintingNow ? 6.5 : 4) * dt;
         const ok = (x: number, y: number) => ![[-0.3, -0.2], [0.3, -0.2], [-0.3, 0.2], [0.3, 0.2]].some(([ox, oy]) => solidAt(st.scene, Math.floor(x + ox!), Math.floor(y + oy!))) && !(st.scene === "rua" && hitsThin(x, y));
-        if (ok(p.x + dx * sp, p.y)) p.x += dx * sp;
-        else if (dx && !dy) { // encostou na quina/pé de um objeto: desliza para o centro da linha em vez de travar
-          const cy = Math.floor(p.y) + 0.5, ny = p.y + Math.sign(cy - p.y) * Math.min(Math.abs(cy - p.y), sp);
-          if (ny !== p.y && ok(p.x, ny)) p.y = ny;
-        }
-        if (ok(p.x, p.y + dy * sp)) p.y += dy * sp;
-        else if (dy && !dx) {
-          const cx = Math.floor(p.x) + 0.5, nx = p.x + Math.sign(cx - p.x) * Math.min(Math.abs(cx - p.x), sp);
-          if (nx !== p.x && ok(nx, p.y)) p.x = nx;
-        }
-        p.acc += dt * (k.has("shift") ? 14 : 9); p.frame = 1 + (Math.floor(p.acc) % 2);
+        const moveAxis = (axis: "x" | "y", amount: number) => {
+          const steps = Math.ceil(Math.abs(amount) / 0.1);
+          const step = amount / steps;
+          for (let i = 0; i < steps; i++) {
+            const x = p.x + (axis === "x" ? step : 0);
+            const y = p.y + (axis === "y" ? step : 0);
+            if (!ok(x, y)) break;
+            p.x = x; p.y = y;
+          }
+        };
+        if (dx) moveAxis("x", dx * sp);
+        if (dy) moveAxis("y", dy * sp);
+        p.acc += dt * (sprintingNow ? 14 : 9); p.frame = 1 + (Math.floor(p.acc) % 2);
       } else if (!auto.current) p.frame = 0;
+      if (sprintingNow && (p.x !== startX || p.y !== startY)) {
+        stamina.current = Math.max(0, stamina.current - elapsed * STAMINA_DRAIN_RATE);
+        if (stamina.current === 0) sprinting.current = false;
+      } else if (!sprintingNow) {
+        stamina.current = Math.min(100, stamina.current + dt * STAMINA_RECOVERY_RATE);
+      }
 
       if (st.scene !== "rua") for (const n of promos.current as Array<{ chase?: boolean }>) n.chase = false;
       if (st.scene === "rua" && free) {
@@ -405,6 +438,7 @@ export function World() {
   const restart = () => {
     // Reinício completo: não carregar penalidades, diálogos ou controles presos da partida anterior.
     keys.current.clear();
+    sprinting.current = false; stamina.current = 100;
     auto.current = null;
     onEnd.current = null;
     setScreen("start"); setScene("casa"); setMoney(405);
@@ -481,6 +515,7 @@ export function World() {
   } else if (scene !== "rua") { const x = rowsOf(scene)[10]!.indexOf("E"); arrow = [x, 9]; }
 
   const cur = lines[0];
+  const staminaPercent = Math.round(stamina.current);
   return (
     <main className="crt fixed inset-0 overflow-hidden bg-background" style={{ ["--t" as string]: `min(calc((100vw - 8px) / ${VW}), calc((100dvh - 92px) / ${VH}))` }}>
       {/* HUD */}
@@ -492,6 +527,13 @@ export function World() {
           <div className="hud h-4 min-w-20 flex-1 p-0"><div className="h-full bg-primary transition-all" style={{ width: `${(m / MISSIONS.length) * 100}%` }} /></div>
           {m === 2 && scene === "rua" && <span className="hud text-destructive">⏱ {Math.ceil(race)}s · {visits.size}/3</span>}
           <button className="hud" onClick={() => setBag(true)}>🎒 {inv.length}</button>
+          <div className="hud flex items-center gap-1.5" role="progressbar" aria-label="Stamina para correr" aria-valuemin={0} aria-valuemax={100} aria-valuenow={staminaPercent} title="Stamina para correr">
+            <span aria-hidden="true">⚡</span>
+            <div className="h-2 w-16 overflow-hidden border border-border bg-muted">
+              <div className={`h-full ${staminaPercent > 60 ? "bg-success" : staminaPercent > 30 ? "bg-accent" : "bg-destructive"}`} style={{ width: `${staminaPercent}%` }} />
+            </div>
+            <span>{staminaPercent}%</span>
+          </div>
           <button className="hud" onClick={() => { if (!hintUsed) setHintUsed(true); talk([{ who: "tuca", text: `Dica: ${MISSIONS[m]?.hint ?? ""}${hintUsed ? "" : " (−20 nesta missão)"}` }]); }}>🐷 DICA</button>
         </div>
         <div className="hud w-full truncate !text-[11px] sm:!text-xs">🎯 <b>{MISSIONS[m]?.t}</b> <span className="text-muted-foreground">· {scene === "rua" ? "Cidade" : SHOP_NAME[scene]}</span></div>
@@ -525,7 +567,7 @@ export function World() {
             : <span key={i} />)}
         </div>
         <div className="pointer-events-auto flex gap-2 opacity-80">
-          <button className="btn h-12 px-3 font-pixel text-[10px]" onPointerDown={() => keys.current.add("shift")} onPointerUp={() => keys.current.delete("shift")} onPointerLeave={() => keys.current.delete("shift")} onPointerCancel={() => keys.current.delete("shift")} onLostPointerCapture={() => keys.current.delete("shift")}>CORRER</button>
+          <button className="btn h-12 px-3 font-pixel text-[10px]" aria-pressed={sprinting.current} onClick={() => inputActions.current.toggleSprint()}>{sprinting.current ? "PARAR" : "CORRER"}</button>
           <button className="btn btn-primary h-14 w-14 rounded-full p-0 font-pixel" onClick={() => (lines.length ? advance() : !busy && interact())}>A</button>
         </div>
       </div>
