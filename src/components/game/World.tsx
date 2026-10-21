@@ -481,7 +481,7 @@ export function World() {
         <div className="my-4 flex items-center gap-4">
           <img src={pJulia} alt="Júlia" width={816} height={816} className="h-28 w-28 border-4 border-primary bg-card pixelated" />
           <p className="leading-7">{ending === "B"
-            ? `Júlia guardou ${brl(money)}. Três meses depois, a mesma mochila estava R$ 140 — e ela pagou à vista sem aperto, ainda sobrando dinheiro.`
+            ? `Júlia guardou ${brl(money)}. Três meses depois, a mesma mochila estava R$ 120 — e ela pagou à vista sem aperto, ainda sobrando dinheiro.`
             : `Júlia gastou R$ 150 e ficou com ${brl(money - 150)}. No mês seguinte, faltou dinheiro para o passeio da escola e ela teve que pedir emprestado.`}</p>
         </div>
         <div className="border-2 border-border bg-card p-4">
